@@ -6,6 +6,12 @@ package com.jogamp.hungryharry;
 import com.jogamp.hungryharry.Config.Feed;
 import com.jogamp.hungryharry.Config.Planet;
 
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.client.methods.HttpUriRequest;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
+
 import com.rometools.rome.feed.synd.SyndContent;
 import com.rometools.rome.feed.synd.SyndEntry;
 import com.rometools.rome.feed.synd.SyndFeed;
@@ -14,10 +20,6 @@ import com.rometools.rome.io.FeedException;
 import com.rometools.rome.io.SyndFeedInput;
 import com.rometools.rome.io.SyndFeedOutput;
 import com.rometools.rome.io.XmlReader;
-import com.rometools.fetcher.FeedFetcher;
-import com.rometools.fetcher.impl.FeedFetcherCache;
-import com.rometools.fetcher.impl.HashMapFeedInfoCache;
-import com.rometools.fetcher.impl.HttpURLFeedFetcher;
 
 import freemarker.template.Configuration;
 import freemarker.template.ObjectWrapper;
@@ -231,37 +233,44 @@ public class FeedAggregator {
     }
 
     private List<SyndEntry> downloadFeeds(List<Feed> feeds, List<SyndFeed> downloadedFeeds) throws IllegalArgumentException {
-
-        FeedFetcherCache feedInfoCache = HashMapFeedInfoCache.getInstance();
-        FeedFetcher feedFetcher = new HttpURLFeedFetcher(feedInfoCache);
-        // trust foreign doctype? feedFetcher.setAllowDoctypes(true);
         List<SyndEntry> collectedEntries = new ArrayList<SyndEntry>();
-        
         Set<String> ids = new HashSet<String>();
         
-        for (Config.Feed feed : feeds) {
-            LOG.info("downloading "+feed);
-            try {
-                SyndFeed inFeed = feedFetcher.retrieveFeed(new URL(feed.url));
-                downloadedFeeds.add(inFeed);
-                List<SyndEntry> entries = inFeed.getEntries();
+        try (CloseableHttpClient client = HttpClients.createMinimal()) {
+            for (Config.Feed feed : feeds) {
+                LOG.info("downloading "+feed);
+                HttpUriRequest request = new HttpGet(feed.url);
+                try (CloseableHttpResponse response = client.execute(request);
+                     InputStream stream = response.getEntity().getContent()
+                    ) 
+                {
+                    if( true || 0 < stream.available() ) {
+                        SyndFeedInput input = new SyndFeedInput();
+                        SyndFeed inFeed = input.build(new XmlReader(stream, true /* lenient */));
+                        downloadedFeeds.add(inFeed);
+                        List<SyndEntry> entries = inFeed.getEntries();
 
-                LOG.info("downloaded "+entries.size()+ " entries");
-                
-                //skip duplicates
-                for (SyndEntry entry : entries) {
-                    String uid = entry.getLink();
-                    if(!ids.contains(uid)) {
-                        ids.add(uid);
-                        collectedEntries.add(entry);
-                    }else{
-                        LOG.info("skiping duplicate entry: "+uid);
+                        LOG.info("downloaded "+entries.size()+ " entries");
+                        
+                        //skip duplicates
+                        for (SyndEntry entry : entries) {
+                            String uid = entry.getLink();
+                            if(!ids.contains(uid)) {
+                                ids.add(uid);
+                                collectedEntries.add(entry);
+                            } else {
+                                LOG.info("skiping duplicate entry: "+uid);
+                            }
+                        }
+                    } else {
+                        LOG.log(WARNING, "skipping feed due to zero input");
                     }
+                } catch (Exception ex) {
+                    LOG.log(WARNING, "skipping feed", ex);
                 }
-                
-            } catch (Exception ex) {
-                LOG.log(WARNING, "skipping feed", ex);
             }
+        } catch (Exception ex) {
+            LOG.log(SEVERE, "HttpClient failure", ex);
         }
 
         sort(collectedEntries, new Comparator<SyndEntry>() {
