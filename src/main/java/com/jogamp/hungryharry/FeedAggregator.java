@@ -103,7 +103,7 @@ public class FeedAggregator {
             map.put("author", entry.getAuthor());
             map.put("published", entry.getPublishedDate());
             map.put("updated", entry.getUpdatedDate());
-            map.put("description", descriptionSC);
+            map.put("description", descriptionSC.getValue());
             
             StringBuilder sb = new StringBuilder();
             List contents = entry.getContents();
